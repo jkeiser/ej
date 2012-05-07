@@ -13,7 +13,7 @@
 % limitations under the License.
 %
 %% @author Seth Falcon <seth@userprimary.net>
-%% @copyright Copyright 2011 Seth Falcon
+%% @copyright Copyright 2011-2012 Seth Falcon
 %%
 %% @doc Tools for working with Erlang terms representing JSON.
 %%
@@ -29,7 +29,8 @@
          get/2,
          get/3,
          set/3,
-         delete/2
+         delete/2,
+         valid/2
          ]).
 
 -ifdef(TEST).
@@ -177,6 +178,93 @@ set_nth(N, L, V) ->
 delete(Keys, Obj) when is_tuple(Keys) ->
     set0([ as_binary(X) || X <- tuple_to_list(Keys) ], Obj, 'EJ_DELETE').
 
+%% valid
+
+%% %% An re module regex (compiled) and a message (binary) that will be
+%% %% returned when nomatch is triggered.
+%% -type string_match() :: {'string_match', {re:mp(), binary()}}.
+
+%% -type string_spec() ::
+%%         %% exact
+%%         binary() |
+%%         %% re module regex with binary message returned when nomatch
+%%         %% is triggered.
+%%         string_match().
+
+%% -type json_type_spec() :: 'string'  |
+%%                           'null'    |
+%%                           'boolean' |
+%%                           'array'   |
+%%                           'object'.
+
+%% -type key_spec() :: string_spec() |
+                    %% {'opt', string_spec()}.
+
+valid({L}, Obj={OL}) when is_list(L) andalso is_list(OL) ->
+    valid(L, Obj, []).
+
+valid([{{Opt, Key}, ValSpec}|Rest], Obj, Path)
+  when is_binary(Key) andalso (Opt =:= opt orelse Opt =:= req) ->
+    case {Opt, ej:get({Key}, Obj)} of
+        {opt, undefined} ->
+            valid(Rest, Obj, Path);
+        {req, undefined} ->
+            {missing, make_path(Key, Path)};
+        {_, Val} ->
+            case check_value_spec(Key, ValSpec, Val, Path) of
+                ok ->
+                    valid(Rest, Obj, Path);
+                Error ->
+                    Error
+            end
+    end;
+valid([{Key, ValSpec}|Rest], Obj, Path) when is_binary(Key) ->
+    %% required key literal
+    valid([{{req, Key}, ValSpec}|Rest], Obj, Path);
+valid([], _Obj, _Path) ->
+    ok.
+
+make_path(Key, Path) ->
+    list_to_tuple(lists:reverse([Key | Path])).
+
+%% FIXME: need to pull out the validation to validate both keys and
+%% values and to give an error message that can distinguish the two.
+check_value_spec(Key, {L}, Val={V}, Path) when is_list(L) andalso is_list(V) ->
+    valid(L, Val, [Key|Path]);
+check_value_spec(Key, {L}, _, Path) when is_list(L) ->
+    {bad_value, make_path(Key, Path), object};
+check_value_spec(Key, {string_match, {Regex, Msg}}, Val, Path) when is_binary(Val) ->
+    case re:run(Val, Regex) of
+        nomatch ->
+            {bad_value, make_path(Key, Path), Msg};
+        {match, _} ->
+            ok
+    end;
+check_value_spec(Key, {string_match, _}, _Val, Path) ->
+    {bad_value, make_path(Key, Path), string};
+check_value_spec(Key, {array_map, ItemSpec}, Val, Path) when is_list(Val) ->
+    case do_array_map(ItemSpec, Val) of
+        ok ->
+            ok;
+        {bad_item, Msg} ->
+            {bad_value, make_path(Key, Path), Msg}
+    end;
+check_value_spec(Key, {array_map, _ItemSpec}, _Val, Path) ->
+    {bad_value, make_path(Key, Path), array};
+check_value_spec(_Key, string, Val, _Path) when is_binary(Val) ->
+    ok;
+check_value_spec(Key, string, _Val, _Path) ->
+    {bad_value, Key, string}.
+
+do_array_map(ItemSpec, [Item|Rest]) ->
+    case check_value_spec(item_key, ItemSpec, Item, []) of
+        ok ->
+            do_array_map(ItemSpec, Rest);
+        Error ->
+            {bad_item, Error}
+    end.
+
+%% end valid
 -ifdef(TEST).
 
 ej_test_() ->
