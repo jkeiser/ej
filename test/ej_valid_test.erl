@@ -13,6 +13,10 @@ basic_spec(1) ->
      ]};
 basic_spec(2) ->
     {[{<<"name">>, {string_match, regex_for(basic_name)}},
+      {<<"objects">>, object}
+     ]};
+basic_spec(e) ->
+    {[{<<"name">>, {string_match, regex_for(basic_name)}},
       {{opt, <<"description">>}, string},
       {{opt, <<"json_class">>}, <<"Chef::Basic">>},
       {<<"items">>, {array_map, regex_for(item)}},
@@ -115,7 +119,7 @@ basic_spec_0_test_() ->
                               basic_with(<<"fred">>,
                                         [{<<"description">>, <<"blah">>}]))),
 
-     ?_assertEqual({bad_value, <<"description">>, string},
+     ?_assertEqual({bad_value, {<<"description">>}, string},
                    ej:valid(Spec,
                               basic_with(<<"fred">>,
                                         [{<<"description">>, {[]}}])))].
@@ -136,4 +140,21 @@ basic_spec_1_test_() ->
 
      ?_assertEqual({bad_value,{<<"items">>},{bad_value,{item_key},string}},
                    ej:valid(Spec, BadItemsType))
+    ].
+
+basic_spec_2_test_() ->
+    %% tests for simple JSON type validation
+    Spec = basic_spec(2),
+    [
+     ?_assertEqual(ok, ej:valid(Spec,
+                                basic_with(<<"fred">>, [{<<"objects">>, {[]}}]))),
+
+     ?_assertEqual({bad_value, {<<"objects">>}, object},
+                   ej:valid(Spec,
+                            basic_with(<<"fred">>, [{<<"objects">>, []}]))),
+
+          ?_assertEqual({bad_value, {<<"objects">>}, object},
+                        ej:valid(Spec,
+                                 basic_with(<<"fred">>, [{<<"objects">>, <<"blah">>}])))
+
     ].
