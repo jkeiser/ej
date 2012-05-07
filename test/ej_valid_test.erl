@@ -153,8 +153,23 @@ basic_spec_2_test_() ->
                    ej:valid(Spec,
                             basic_with(<<"fred">>, [{<<"objects">>, []}]))),
 
-          ?_assertEqual({bad_value, {<<"objects">>}, object},
-                        ej:valid(Spec,
-                                 basic_with(<<"fred">>, [{<<"objects">>, <<"blah">>}])))
+     ?_assertEqual({bad_value, {<<"objects">>}, object},
+                   ej:valid(Spec,
+                            basic_with(<<"fred">>, [{<<"objects">>, <<"blah">>}])))
+
+    ].
+
+literal_key_and_value_test_() ->
+    Spec = {[
+             {<<"class">>, <<"Memo">>}
+            ]},
+    [
+     ?_assertEqual(ok, ej:valid(Spec, {[{<<"class">>, <<"Memo">>}]})),
+
+     ?_assertEqual({bad_value, {<<"class">>}, <<"Memo">>},
+                   ej:valid(Spec, {[{<<"class">>, <<"Blah">>}]})),
+
+     ?_assertEqual({missing, {<<"class">>}},
+                   ej:valid(Spec, {[]}))
 
     ].

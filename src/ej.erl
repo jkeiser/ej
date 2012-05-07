@@ -258,7 +258,12 @@ check_value_spec(Key, string, _Val, Path) ->
 check_value_spec(_Key, object, {VL}, _Path) when is_list(VL) ->
     ok;
 check_value_spec(Key, object, _Val, Path) ->
-    {bad_value, make_path(Key, Path), object}.
+    {bad_value, make_path(Key, Path), object};
+check_value_spec(_Key, Val, Val, _Path) when is_binary(Val) ->
+    %% exact match desired
+    ok;
+check_value_spec(Key, SpecVal, _Val, Path) when is_binary(SpecVal) ->
+    {bad_value, make_path(Key, Path), SpecVal}.
 
 do_array_map(ItemSpec, [Item|Rest]) ->
     case check_value_spec(item_key, ItemSpec, Item, []) of
