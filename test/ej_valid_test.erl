@@ -1,49 +1,21 @@
 -module(ej_valid_test).
 
 -include_lib("eunit/include/eunit.hrl").
-
-basic_spec(0) ->
-    {[{<<"name">>, {string_match, regex_for(basic_name)}},
-      {{opt, <<"description">>}, string}
-     ]};
-basic_spec(1) ->
-    {[{<<"name">>, {string_match, regex_for(basic_name)}},
-      {{opt, <<"description">>}, string},
-      {<<"items">>, {array_map, {string_match, regex_for(item)}}}
-     ]};
-basic_spec(2) ->
-    {[{<<"name">>, {string_match, regex_for(basic_name)}},
-      {<<"objects">>, object}
-     ]};
-basic_spec(e) ->
-    {[{<<"name">>, {string_match, regex_for(basic_name)}},
-      {{opt, <<"description">>}, string},
-      {{opt, <<"json_class">>}, <<"Chef::Basic">>},
-      {<<"items">>, {array_map, regex_for(item)}},
-      {<<"map_items">>,
-       {object_map,
-        %% key spec
-        {string_match, regex_for(item_name)},
-        %% value spec
-        {array_map, regex_for(item)}}}
-     ]}.
+-include_lib("ej/include/ej.hrl").
 
 regex_for(_) ->
     Pat = <<"^[[:alpha:]]+$">>,
     {ok, Regex} = re:compile(Pat),
     {Regex, Pat}.
 
-nested_spec(0) ->
-    {[{<<"name">>, {string_match, regex_for(name)}},
-      {<<"a">>, {[
-                  {<<"a_name">>, {string_match, regex_for(name)}},
-                  {<<"b">>,
-                   {[{<<"b_name">>, {string_match, regex_for(name)}}]}}
-                 ]}}
-     ]}.
-
 nested_spec_0_test_() ->
-    Spec = nested_spec(0),
+    Spec = {[{<<"name">>, {string_match, regex_for(name)}},
+             {<<"a">>, {[
+                         {<<"a_name">>, {string_match, regex_for(name)}},
+                         {<<"b">>,
+                          {[{<<"b_name">>, {string_match, regex_for(name)}}]}}
+                        ]}}
+            ]},
     {_, RegexMsg} = regex_for(name),
     Tests = [
 
@@ -51,30 +23,32 @@ nested_spec_0_test_() ->
              %%  expected}
 
              {{[{<<"name">>, <<"top">>}]},
-              {missing, {<<"a">>}}},
+              #ej_invalid{type = missing, key = <<"a">>}},
 
              {{[{<<"name">>, <<"top">>}, {<<"a">>, {[]}}]},
-              {missing, {<<"a">>, <<"a_name">>}}}, % <<"a.a_name">>
+              #ej_invalid{type = missing, key = <<"a.a_name">>}},
 
              {{[{<<"name">>, <<"top">>},
                 {<<"a">>,
                  {[{<<"a_name">>, <<"alice">>}]}}
                ]},
-              {missing, {<<"a">>, <<"b">>}}},
+              #ej_invalid{type = missing, key = <<"a.b">>}},
 
              {{[{<<"name">>, <<"top">>},
                 {<<"a">>,
                  {[{<<"a_name">>, <<"alice">>},
                    {<<"b">>, {[]}}]}}
                ]},
-              {missing, {<<"a">>, <<"b">>, <<"b_name">>}}},
+              #ej_invalid{type = missing, key = <<"a.b.b_name">>}},
 
              {{[{<<"name">>, <<"top">>},
                 {<<"a">>,
                  {[{<<"a_name">>, <<"alice">>},
                    {<<"b">>, <<"BAD">>}]}}
                ]},
-              {bad_value, {<<"a">>, <<"b">>}, object}},
+              #ej_invalid{type = json_type, key = <<"a.b">>,
+                          found = <<"BAD">>, found_type = string,
+                          expected_type = object}},
 
              {{[{<<"name">>, <<"top">>},
                 {<<"a">>,
@@ -82,8 +56,11 @@ nested_spec_0_test_() ->
                    {<<"b">>,
                     {[{<<"b_name">>, <<"___">>}]}}]}}
                ]},
-              {bad_value, {<<"a">>, <<"b">>, <<"b_name">>}, RegexMsg}
-             },
+              #ej_invalid{type = string_match, key = <<"a.b.b_name">>,
+                          found = <<"___">>,
+                          found_type = string,
+                          expected_type = string,
+                          msg = RegexMsg}},
 
              {{[{<<"name">>, <<"top">>},
                 {<<"a">>,
@@ -93,7 +70,7 @@ nested_spec_0_test_() ->
                ]},
               ok}
             ],
-    [ ?_assertEqual(Expect, ej:valid(Spec, In)) || {In, Expect} <- Tests ].
+    [ ?_assertMatch(Expect, ej:valid(Spec, In)) || {In, Expect} <- Tests ].
 
 basic(Name) ->
     {[{<<"name">>, Name}]}.
@@ -104,14 +81,21 @@ basic_with(Name, With) ->
                 end, basic(Name), With).
 
 basic_spec_0_test_() ->
-    Spec = basic_spec(0),
+    Spec = {[{<<"name">>, {string_match, regex_for(basic_name)}},
+             {{opt, <<"description">>}, string}
+            ]},
     {_, BasicRegexMsg} = regex_for(basic),
     [?_assertEqual(ok, ej:valid(Spec, basic(<<"fred">>))),
 
-     ?_assertEqual({missing, {<<"name">>}},
+     ?_assertMatch(#ej_invalid{type = missing, key = <<"name">>},
                    ej:valid(Spec, {[]})),
 
-     ?_assertEqual({bad_value, {<<"name">>}, BasicRegexMsg},
+     ?_assertMatch(#ej_invalid{type = string_match,
+                               key = <<"name">>,
+                               found = <<"&2%!">>,
+                               found_type = string,
+                               expected_type = string,
+                               msg = BasicRegexMsg},
                    ej:valid(Spec, basic(<<"&2%!">>))),
 
      ?_assertEqual(ok,
@@ -119,7 +103,11 @@ basic_spec_0_test_() ->
                               basic_with(<<"fred">>,
                                         [{<<"description">>, <<"blah">>}]))),
 
-     ?_assertEqual({bad_value, {<<"description">>}, string},
+     ?_assertEqual(#ej_invalid{type = json_type,
+                               expected_type = string,
+                               found_type = object,
+                               found = {[]},
+                               key = <<"description">>},
                    ej:valid(Spec,
                               basic_with(<<"fred">>,
                                         [{<<"description">>, {[]}}])))].
@@ -133,30 +121,45 @@ basic_spec_1_test_() ->
                             [{<<"items">>, <<"abc">>}]),
     BadItemsType = basic_with(<<"fred">>,
                               [{<<"items">>, [1, 2, 3]}]),
-    %% {_, BasicRegexMsg} = regex_for(basic),
     [
-     ?_assertEqual({missing, {<<"items">>}},
+     ?_assertMatch(#ej_invalid{type = missing, key = <<"items">>},
                    ej:valid(Spec, basic(<<"fred">>))),
 
-     ?_assertEqual({bad_value, {<<"items">>}, array},
+     ?_assertEqual(#ej_invalid{type = json_type,
+                               expected_type = array,
+                               found_type = string,
+                               found = <<"abc">>,
+                               key = <<"items">>},
                    ej:valid(Spec, BadItemList)),
 
-     ?_assertEqual({bad_value,{<<"items">>},{bad_value,{item_key},string}},
+     ?_assertMatch(#ej_invalid{type = array_elt,
+                               expected_type = string,
+                               found_type = number,
+                               key = <<"items">>},
                    ej:valid(Spec, BadItemsType))
     ].
 
 basic_spec_2_test_() ->
     %% tests for simple JSON type validation
-    Spec = basic_spec(2),
+    Spec = {[{<<"name">>, {string_match, regex_for(basic_name)}},
+             {<<"objects">>, object}
+            ]},
     [
      ?_assertEqual(ok, ej:valid(Spec,
                                 basic_with(<<"fred">>, [{<<"objects">>, {[]}}]))),
 
-     ?_assertEqual({bad_value, {<<"objects">>}, object},
-                   ej:valid(Spec,
-                            basic_with(<<"fred">>, [{<<"objects">>, []}]))),
+     ?_assertEqual(#ej_invalid{type = json_type,
+                               key = <<"objects">>,
+                               expected_type = object,
+                               found = [],
+                               found_type = array},
+                   ej:valid(Spec, basic_with(<<"fred">>, [{<<"objects">>, []}]))),
 
-     ?_assertEqual({bad_value, {<<"objects">>}, object},
+     ?_assertEqual(#ej_invalid{type = json_type,
+                               key = <<"objects">>,
+                               expected_type = object,
+                               found_type = string,
+                               found = <<"blah">>},
                    ej:valid(Spec,
                             basic_with(<<"fred">>, [{<<"objects">>, <<"blah">>}])))
 
@@ -169,10 +172,15 @@ literal_key_and_value_test_() ->
     [
      ?_assertEqual(ok, ej:valid(Spec, {[{<<"class">>, <<"Memo">>}]})),
 
-     ?_assertEqual({bad_value, {<<"class">>}, <<"Memo">>},
+     ?_assertEqual(#ej_invalid{type = exact,
+                               key = <<"class">>,
+                               expected_type = string,
+                               found_type = string,
+                               found = <<"Blah">>,
+                               msg = <<"Memo">>},
                    ej:valid(Spec, {[{<<"class">>, <<"Blah">>}]})),
 
-     ?_assertEqual({missing, {<<"class">>}},
+     ?_assertEqual(#ej_invalid{type = missing, key = <<"class">>},
                    ej:valid(Spec, {[]}))
 
     ].

@@ -180,20 +180,6 @@ delete(Keys, Obj) when is_tuple(Keys) ->
 
 %% valid
 
--type spec_type() :: mising | exact | string_match | json_type.
-
--type json_type_name() :: number | null | boolean | string | array | object.
-
-%% The return record for validity checks
--record(ej_invalid, {
-        type          :: spec_type(),
-        key           :: binary(),
-        found         :: json_term(),
-        found_type    :: json_type_name(),
-        expected_type :: json_type_name(),
-        msg           :: term() %% defined in spec
-       }).
-
 %% context threaded through validity checking
 -record(spec_ctx, {
           path = [] :: [binary()],
@@ -229,7 +215,7 @@ valid([{{Opt, Key}, ValSpec}|Rest], Obj, Ctx = #spec_ctx{path = Path} = Ctx)
         {opt, undefined} ->
             valid(Rest, Obj, Ctx);
         {req, undefined} ->
-            {missing, make_path(Key, Path)};
+            #ej_invalid{type = missing, key = make_key(Key, Path)};
         {_, Val} ->
             case check_value_spec(Key, ValSpec, Val, Ctx) of
                 ok ->
@@ -247,50 +233,102 @@ valid([], _Obj, _Ctx) ->
 make_path(Key, Path) ->
     list_to_tuple(lists:reverse([Key | Path])).
 
+make_key(Key, Path) ->
+    join_path(make_path(Key, Path)).
+
 join_path(Path) ->
     join_bins(tuple_to_list(Path), <<".">>).
+
+json_type(Val) when is_binary(Val) ->
+    string;
+json_type({L}) when is_list(L) ->
+    object;
+json_type(L) when is_list(L) ->
+    array;
+json_type(null) ->
+    null;
+json_type(Bool) when Bool =:= true; Bool =:= false ->
+    boolean;
+json_type(N) when is_integer(N) orelse is_float(N) ->
+    number.
 
 %% FIXME: need to pull out the validation to validate both keys and
 %% values and to give an error message that can distinguish the two.
 check_value_spec(Key, {L}, Val={V}, #spec_ctx{path = Path} = Ctx) when is_list(L) andalso is_list(V) ->
+    %% traverse nested spec here
     valid(L, Val, Ctx#spec_ctx{path = [Key|Path]});
-check_value_spec(Key, {L}, _, #spec_ctx{path = Path}) when is_list(L) ->
-    {bad_value, make_path(Key, Path), object};
+check_value_spec(Key, {L}, Val, #spec_ctx{path = Path}) when is_list(L) ->
+    %% was expecting nested spec, found non-object
+    #ej_invalid{type = json_type, key = make_key(Key, Path),
+                expected_type = object,
+                found = Val,
+                found_type = json_type(Val)};
 check_value_spec(Key, {string_match, {Regex, Msg}}, Val, #spec_ctx{path = Path}) when is_binary(Val) ->
+    %% string_match
     case re:run(Val, Regex) of
         nomatch ->
-            {bad_value, make_path(Key, Path), Msg};
+            #ej_invalid{type = string_match, key = make_key(Key, Path),
+                        expected_type = string,
+                        found = Val,
+                        found_type = string,
+                        msg = Msg};
         {match, _} ->
             ok
     end;
-check_value_spec(Key, {string_match, _}, _Val, #spec_ctx{path = Path}) ->
-    {bad_value, make_path(Key, Path), string};
+check_value_spec(Key, {string_match, _}, Val, #spec_ctx{path = Path}) ->
+    %% expected string for string_match, got wrong type
+    #ej_invalid{type = json_type, key = make_key(Key, Path),
+                expected_type = string,
+                found_type = json_type(Val),
+                found = Val};
 check_value_spec(Key, {array_map, ItemSpec}, Val, #spec_ctx{path = Path}) when is_list(Val) ->
     case do_array_map(ItemSpec, Val) of
         ok ->
             ok;
-        {bad_item, Msg} ->
-            {bad_value, make_path(Key, Path), Msg}
+        {bad_item, InvalidItem} ->
+            #ej_invalid{type = array_elt,
+                        key = make_key(Key, Path),
+                        expected_type = InvalidItem#ej_invalid.expected_type,
+                        found_type = InvalidItem#ej_invalid.found_type,
+                        found = InvalidItem#ej_invalid.found,
+                        msg = InvalidItem#ej_invalid.msg}
     end;
-check_value_spec(Key, {array_map, _ItemSpec}, _Val, #spec_ctx{path = Path}) ->
-    {bad_value, make_path(Key, Path), array};
+check_value_spec(Key, {array_map, _ItemSpec}, Val, #spec_ctx{path = Path}) ->
+    %% expected an array for array_map, found wrong type
+    #ej_invalid{type = json_type, key = make_key(Key, Path),
+                expected_type = array,
+                found_type = json_type(Val),
+                found = Val};
 check_value_spec(_Key, string, Val, _Ctx) when is_binary(Val) ->
     ok;
-check_value_spec(Key, string, _Val, #spec_ctx{path = Path}) ->
-    {bad_value, make_path(Key, Path), string};
+check_value_spec(Key, string, Val, #spec_ctx{path = Path}) ->
+    invalid_for_type(string, Val, Key, Path);
 check_value_spec(_Key, object, {VL}, _Ctx) when is_list(VL) ->
     ok;
-check_value_spec(Key, object, _Val, #spec_ctx{path = Path}) ->
-    {bad_value, make_path(Key, Path), object};
+check_value_spec(Key, object, Val, #spec_ctx{path = Path}) ->
+    invalid_for_type(object, Val, Key, Path);
 check_value_spec(_Key, Val, Val, _Ctx) when is_binary(Val) ->
     %% exact match desired
     ok;
-check_value_spec(Key, SpecVal, _Val, #spec_ctx{path = Path}) when is_binary(SpecVal) ->
-    {bad_value, make_path(Key, Path), SpecVal}.
+check_value_spec(Key, SpecVal, Val, #spec_ctx{path = Path}) when is_binary(SpecVal) ->
+    %% exact match failed
+    #ej_invalid{type = exact,
+                key = make_key(Key, Path),
+                found = Val,
+                expected_type = string,
+                found_type = json_type(Val),
+                msg = SpecVal}.
+
+invalid_for_type(ExpectType, Val, Key, Path) ->
+    #ej_invalid{type = json_type,
+                expected_type = ExpectType,
+                found_type = json_type(Val),
+                found = Val,
+                key = make_key(Key, Path)}.
 
 do_array_map(ItemSpec, [Item|Rest]) ->
     %% FIXME: do we want to record element index?
-    case check_value_spec(item_key, ItemSpec, Item, #spec_ctx{}) of
+    case check_value_spec(<<"item_fake_key">>, ItemSpec, Item, #spec_ctx{}) of
         ok ->
             do_array_map(ItemSpec, Rest);
         Error ->
