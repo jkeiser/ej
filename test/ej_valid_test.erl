@@ -54,7 +54,7 @@ nested_spec_0_test_() ->
               {missing, {<<"a">>}}},
 
              {{[{<<"name">>, <<"top">>}, {<<"a">>, {[]}}]},
-              {missing, {<<"a">>, <<"a_name">>}}},
+              {missing, {<<"a">>, <<"a_name">>}}}, % <<"a.a_name">>
 
              {{[{<<"name">>, <<"top">>},
                 {<<"a">>,
@@ -125,7 +125,10 @@ basic_spec_0_test_() ->
                                         [{<<"description">>, {[]}}])))].
 
 basic_spec_1_test_() ->
-    Spec = basic_spec(1),
+    Spec = {[{<<"name">>, {string_match, regex_for(basic_name)}},
+             {{opt, <<"description">>}, string},
+             {<<"items">>, {array_map, {string_match, regex_for(item)}}}
+            ]},
     BadItemList = basic_with(<<"fred">>,
                             [{<<"items">>, <<"abc">>}]),
     BadItemsType = basic_with(<<"fred">>,

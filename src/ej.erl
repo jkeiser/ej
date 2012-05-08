@@ -180,6 +180,26 @@ delete(Keys, Obj) when is_tuple(Keys) ->
 
 %% valid
 
+-type spec_type() :: mising | exact | string_match | json_type.
+
+-type json_type_name() :: number | null | boolean | string | array | object.
+
+%% The return record for validity checks
+-record(ej_invalid, {
+        type          :: spec_type(),
+        key           :: binary(),
+        found         :: json_term(),
+        found_type    :: json_type_name(),
+        expected_type :: json_type_name(),
+        msg           :: term() %% defined in spec
+       }).
+
+%% context threaded through validity checking
+-record(spec_ctx, {
+          path = [] :: [binary()],
+          errors = [] :: [term()]
+         }).
+
 %% %% An re module regex (compiled) and a message (binary) that will be
 %% %% returned when nomatch is triggered.
 %% -type string_match() :: {'string_match', {re:mp(), binary()}}.
@@ -201,77 +221,92 @@ delete(Keys, Obj) when is_tuple(Keys) ->
                     %% {'opt', string_spec()}.
 
 valid({L}, Obj={OL}) when is_list(L) andalso is_list(OL) ->
-    valid(L, Obj, []).
+    valid(L, Obj, #spec_ctx{}).
 
-valid([{{Opt, Key}, ValSpec}|Rest], Obj, Path)
+valid([{{Opt, Key}, ValSpec}|Rest], Obj, Ctx = #spec_ctx{path = Path} = Ctx)
   when is_binary(Key) andalso (Opt =:= opt orelse Opt =:= req) ->
     case {Opt, ej:get({Key}, Obj)} of
         {opt, undefined} ->
-            valid(Rest, Obj, Path);
+            valid(Rest, Obj, Ctx);
         {req, undefined} ->
             {missing, make_path(Key, Path)};
         {_, Val} ->
-            case check_value_spec(Key, ValSpec, Val, Path) of
+            case check_value_spec(Key, ValSpec, Val, Ctx) of
                 ok ->
-                    valid(Rest, Obj, Path);
+                    valid(Rest, Obj, Ctx);
                 Error ->
                     Error
             end
     end;
-valid([{Key, ValSpec}|Rest], Obj, Path) when is_binary(Key) ->
+valid([{Key, ValSpec}|Rest], Obj, #spec_ctx{} = Ctx) when is_binary(Key) ->
     %% required key literal
-    valid([{{req, Key}, ValSpec}|Rest], Obj, Path);
-valid([], _Obj, _Path) ->
+    valid([{{req, Key}, ValSpec}|Rest], Obj, Ctx);
+valid([], _Obj, _Ctx) ->
     ok.
 
 make_path(Key, Path) ->
     list_to_tuple(lists:reverse([Key | Path])).
 
+join_path(Path) ->
+    join_bins(tuple_to_list(Path), <<".">>).
+
 %% FIXME: need to pull out the validation to validate both keys and
 %% values and to give an error message that can distinguish the two.
-check_value_spec(Key, {L}, Val={V}, Path) when is_list(L) andalso is_list(V) ->
-    valid(L, Val, [Key|Path]);
-check_value_spec(Key, {L}, _, Path) when is_list(L) ->
+check_value_spec(Key, {L}, Val={V}, #spec_ctx{path = Path} = Ctx) when is_list(L) andalso is_list(V) ->
+    valid(L, Val, Ctx#spec_ctx{path = [Key|Path]});
+check_value_spec(Key, {L}, _, #spec_ctx{path = Path}) when is_list(L) ->
     {bad_value, make_path(Key, Path), object};
-check_value_spec(Key, {string_match, {Regex, Msg}}, Val, Path) when is_binary(Val) ->
+check_value_spec(Key, {string_match, {Regex, Msg}}, Val, #spec_ctx{path = Path}) when is_binary(Val) ->
     case re:run(Val, Regex) of
         nomatch ->
             {bad_value, make_path(Key, Path), Msg};
         {match, _} ->
             ok
     end;
-check_value_spec(Key, {string_match, _}, _Val, Path) ->
+check_value_spec(Key, {string_match, _}, _Val, #spec_ctx{path = Path}) ->
     {bad_value, make_path(Key, Path), string};
-check_value_spec(Key, {array_map, ItemSpec}, Val, Path) when is_list(Val) ->
+check_value_spec(Key, {array_map, ItemSpec}, Val, #spec_ctx{path = Path}) when is_list(Val) ->
     case do_array_map(ItemSpec, Val) of
         ok ->
             ok;
         {bad_item, Msg} ->
             {bad_value, make_path(Key, Path), Msg}
     end;
-check_value_spec(Key, {array_map, _ItemSpec}, _Val, Path) ->
+check_value_spec(Key, {array_map, _ItemSpec}, _Val, #spec_ctx{path = Path}) ->
     {bad_value, make_path(Key, Path), array};
-check_value_spec(_Key, string, Val, _Path) when is_binary(Val) ->
+check_value_spec(_Key, string, Val, _Ctx) when is_binary(Val) ->
     ok;
-check_value_spec(Key, string, _Val, Path) ->
+check_value_spec(Key, string, _Val, #spec_ctx{path = Path}) ->
     {bad_value, make_path(Key, Path), string};
-check_value_spec(_Key, object, {VL}, _Path) when is_list(VL) ->
+check_value_spec(_Key, object, {VL}, _Ctx) when is_list(VL) ->
     ok;
-check_value_spec(Key, object, _Val, Path) ->
+check_value_spec(Key, object, _Val, #spec_ctx{path = Path}) ->
     {bad_value, make_path(Key, Path), object};
-check_value_spec(_Key, Val, Val, _Path) when is_binary(Val) ->
+check_value_spec(_Key, Val, Val, _Ctx) when is_binary(Val) ->
     %% exact match desired
     ok;
-check_value_spec(Key, SpecVal, _Val, Path) when is_binary(SpecVal) ->
+check_value_spec(Key, SpecVal, _Val, #spec_ctx{path = Path}) when is_binary(SpecVal) ->
     {bad_value, make_path(Key, Path), SpecVal}.
 
 do_array_map(ItemSpec, [Item|Rest]) ->
-    case check_value_spec(item_key, ItemSpec, Item, []) of
+    %% FIXME: do we want to record element index?
+    case check_value_spec(item_key, ItemSpec, Item, #spec_ctx{}) of
         ok ->
             do_array_map(ItemSpec, Rest);
         Error ->
             {bad_item, Error}
     end.
+
+join_bins([], _Sep) ->
+    <<>>;
+join_bins(Bins, Sep) when is_binary(Sep) ->
+    join_bins(Bins, Sep, []).
+
+join_bins([B], _Sep, Acc) ->
+    iolist_to_binary(lists:reverse([B|Acc]));
+join_bins([B|Rest], Sep, Acc) ->
+    join_bins(Rest, Sep, [Sep, B | Acc]).
+
 
 %% end valid
 -ifdef(TEST).
