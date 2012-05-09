@@ -261,7 +261,8 @@ type_from_spec(Type) when Type =:= string;
                           Type =:= boolean;
                           Type =:= array;
                           Type =:= object;
-                          Type =:= null ->
+                          Type =:= null;
+                          Type =:= any_value ->
     Type;
 type_from_spec(Type) ->
     error({unknown_spec, type_from_spec, Type}).
@@ -370,6 +371,15 @@ check_value_spec(Key, {object_map, _ItemSpec}, Val, #spec_ctx{path = Path}) ->
                 expected_type = object,
                 found_type = json_type(Val),
                 found = Val};
+
+check_value_spec(Key, {any_of, Spec1, Spec2}, Val, Ctx) ->
+    case check_value_spec(Key, Spec1, Val, Ctx) of
+        ok -> ok;
+        _Error -> check_value_spec(Key, Spec2, Val, Ctx)
+    end;
+
+check_value_spec(_Key, any_value, _Val, _Ctx) ->
+    ok;
 
 check_value_spec(_Key, string, Val, _Ctx) when is_binary(Val) ->
     ok;
