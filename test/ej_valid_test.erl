@@ -3,12 +3,7 @@
 -include_lib("eunit/include/eunit.hrl").
 -include_lib("ej/include/ej.hrl").
 
-regex_for(_) ->
-    Pat = <<"^[[:alpha:]]+$">>,
-    {ok, Regex} = re:compile(Pat),
-    {Regex, Pat}.
-
-nested_spec_0_test_() ->
+nested_specs_test_() ->
     Spec = {[{<<"name">>, {string_match, regex_for(name)}},
              {<<"a">>, {[
                          {<<"a_name">>, {string_match, regex_for(name)}},
@@ -23,23 +18,25 @@ nested_spec_0_test_() ->
              %%  expected}
 
              {{[{<<"name">>, <<"top">>}]},
-              #ej_invalid{type = missing, key = <<"a">>}},
+              #ej_invalid{type = missing, key = <<"a">>,
+                          expected_type = object}},
 
              {{[{<<"name">>, <<"top">>}, {<<"a">>, {[]}}]},
-              #ej_invalid{type = missing, key = <<"a.a_name">>}},
+              #ej_invalid{type = missing, key = <<"a.a_name">>, expected_type = string}},
 
              {{[{<<"name">>, <<"top">>},
                 {<<"a">>,
                  {[{<<"a_name">>, <<"alice">>}]}}
                ]},
-              #ej_invalid{type = missing, key = <<"a.b">>}},
+              #ej_invalid{type = missing, key = <<"a.b">>, expected_type = object}},
 
              {{[{<<"name">>, <<"top">>},
                 {<<"a">>,
                  {[{<<"a_name">>, <<"alice">>},
                    {<<"b">>, {[]}}]}}
                ]},
-              #ej_invalid{type = missing, key = <<"a.b.b_name">>}},
+              #ej_invalid{type = missing, key = <<"a.b.b_name">>,
+                          expected_type = string}},
 
              {{[{<<"name">>, <<"top">>},
                 {<<"a">>,
@@ -70,7 +67,7 @@ nested_spec_0_test_() ->
                ]},
               ok}
             ],
-    [ ?_assertMatch(Expect, ej:valid(Spec, In)) || {In, Expect} <- Tests ].
+    [ ?_assertEqual(Expect, ej:valid(Spec, In)) || {In, Expect} <- Tests ].
 
 basic(Name) ->
     {[{<<"name">>, Name}]}.
@@ -180,7 +177,83 @@ literal_key_and_value_test_() ->
                                msg = <<"Memo">>},
                    ej:valid(Spec, {[{<<"class">>, <<"Blah">>}]})),
 
-     ?_assertEqual(#ej_invalid{type = missing, key = <<"class">>},
+     ?_assertEqual(#ej_invalid{type = missing, key = <<"class">>, expected_type = string},
                    ej:valid(Spec, {[]}))
-
     ].
+
+object_map_test_() ->
+    Spec = {[
+             {<<"object">>,
+              {object_map,
+               {keys, {string_match, regex_for(key)}},
+               {values, {string_match, regex_for(value)}}}}
+            ]},
+        
+    Good = {[{<<"object">>,
+              {[
+                {<<"k1">>, <<"v1">>},
+                {<<"k2">>, <<"v2">>},
+                {<<"k3">>, <<"v3">>}
+               ]}}
+            ]},
+
+    GoodEmpty = {[{<<"object">>,
+                   {[]}}
+                 ]},
+
+    BadKey = {[
+               {<<"object">>,
+                {[
+                  {<<"k1">>, <<"v1">>},
+                  {<<"___">>, <<"v2">>},
+                  {<<"k3">>, <<"v3">>}
+                 ]}}
+            ]},
+
+    BadValue = {[
+                 {<<"object">>,
+                  {[
+                    {<<"k1">>, <<"v1">>},
+                    {<<"k2">>, <<"v2">>},
+                    {<<"k3">>, <<"___">>}
+                   ]}}
+                ]},
+
+    BadMissing = {[]},
+
+    [
+     ?_assertEqual(ok, ej:valid(Spec, Good)),
+     ?_assertEqual(ok, ej:valid(Spec, GoodEmpty)),
+
+     ?_assertEqual(#ej_invalid{type = object_key, key = <<"object">>,
+                               expected_type = string,
+                               found_type = string,
+                               found = <<"___">>,
+                               msg = <<"^[[:alpha:][:digit:]]+$">>},
+                   ej:valid(Spec, BadKey)),
+
+     ?_assertEqual(#ej_invalid{type = object_value, key = <<"object">>,
+                               expected_type = string,
+                               found_type = string,
+                               found = <<"___">>,
+                               msg = <<"^[[:alpha:][:digit:]]+$">>},
+                   ej:valid(Spec, BadValue)),
+     
+     ?_assertEqual(#ej_invalid{type = missing, key = <<"object">>,
+                               expected_type = object},
+                   ej:valid(Spec, BadMissing))
+    ].
+
+regex_for(key) ->
+    Pat = <<"^[[:alpha:][:digit:]]+$">>,
+    {ok, Regex} = re:compile(Pat),
+    {Regex, Pat};
+regex_for(value) ->
+    Pat = <<"^[[:alpha:][:digit:]]+$">>,
+    {ok, Regex} = re:compile(Pat),
+    {Regex, Pat};
+regex_for(_) ->
+    Pat = <<"^[[:alpha:]]+$">>,
+    {ok, Regex} = re:compile(Pat),
+    {Regex, Pat}.
+

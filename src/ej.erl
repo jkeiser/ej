@@ -215,7 +215,8 @@ valid([{{Opt, Key}, ValSpec}|Rest], Obj, Ctx = #spec_ctx{path = Path} = Ctx)
         {opt, undefined} ->
             valid(Rest, Obj, Ctx);
         {req, undefined} ->
-            #ej_invalid{type = missing, key = make_key(Key, Path)};
+            #ej_invalid{type = missing, key = make_key(Key, Path),
+                        expected_type = type_from_spec(ValSpec)};
         {_, Val} ->
             case check_value_spec(Key, ValSpec, Val, Ctx) of
                 ok ->
@@ -238,6 +239,29 @@ make_key(Key, Path) ->
 
 join_path(Path) ->
     join_bins(tuple_to_list(Path), <<".">>).
+
+type_from_spec({string_match, _}) ->
+    string;
+type_from_spec({array_map, _}) ->
+    array;
+type_from_spec({object_map, _, _}) ->
+    object;
+type_from_spec(Literal) when is_binary(Literal) ->
+    string;
+type_from_spec(Literal) when is_integer(Literal) orelse is_float(Literal) ->
+    number;
+type_from_spec({L}) when is_list(L) ->
+    object;
+type_from_spec(Type) when Type =:= string;
+                          Type =:= number;
+                          Type =:= boolean;
+                          Type =:= array;
+                          Type =:= object
+                          ->
+    Type;
+type_from_spec(Type) ->
+    error({unknown_spec, type_from_spec, Type}).
+
 
 json_type(Val) when is_binary(Val) ->
     string;
@@ -281,6 +305,7 @@ check_value_spec(Key, {string_match, _}, Val, #spec_ctx{path = Path}) ->
                 expected_type = string,
                 found_type = json_type(Val),
                 found = Val};
+
 check_value_spec(Key, {array_map, ItemSpec}, Val, #spec_ctx{path = Path}) when is_list(Val) ->
     case do_array_map(ItemSpec, Val) of
         ok ->
@@ -299,6 +324,27 @@ check_value_spec(Key, {array_map, _ItemSpec}, Val, #spec_ctx{path = Path}) ->
                 expected_type = array,
                 found_type = json_type(Val),
                 found = Val};
+
+check_value_spec(Key, {object_map, {keys, KeySpec}, {values, ValSpec}},
+                 Val={L}, #spec_ctx{path = Path}) when is_list(L) ->
+    case do_object_map(KeySpec, ValSpec, Val) of
+        ok ->
+            ok;
+        {bad_item, Type, InvalidItem} ->
+            #ej_invalid{type = Type,
+                        key = make_key(Key, Path),
+                        expected_type = InvalidItem#ej_invalid.expected_type,
+                        found_type = InvalidItem#ej_invalid.found_type,
+                        found = InvalidItem#ej_invalid.found,
+                        msg = InvalidItem#ej_invalid.msg}
+    end;
+check_value_spec(Key, {object_map, _ItemSpec}, Val, #spec_ctx{path = Path}) ->
+    %% expected an object for object_map, found wrong type
+    #ej_invalid{type = json_type, key = make_key(Key, Path),
+                expected_type = object,
+                found_type = json_type(Val),
+                found = Val};
+
 check_value_spec(_Key, string, Val, _Ctx) when is_binary(Val) ->
     ok;
 check_value_spec(Key, string, Val, #spec_ctx{path = Path}) ->
@@ -307,6 +353,10 @@ check_value_spec(_Key, object, {VL}, _Ctx) when is_list(VL) ->
     ok;
 check_value_spec(Key, object, Val, #spec_ctx{path = Path}) ->
     invalid_for_type(object, Val, Key, Path);
+check_value_spec(_Key, number, Val, _Ctx) when is_number(Val) ->
+    ok;
+check_value_spec(Key, number, Val, #spec_ctx{path = Path}) ->
+    invalid_for_type(number, Val, Key, Path);
 check_value_spec(_Key, Val, Val, _Ctx) when is_binary(Val) ->
     %% exact match desired
     ok;
@@ -317,7 +367,11 @@ check_value_spec(Key, SpecVal, Val, #spec_ctx{path = Path}) when is_binary(SpecV
                 found = Val,
                 expected_type = string,
                 found_type = json_type(Val),
-                msg = SpecVal}.
+                msg = SpecVal};
+check_value_spec(Key, SpecVal, Val, #spec_ctx{path = Path}) ->
+    %% catch all
+    error({unknown_spec, SpecVal, {key, make_key(Key, Path)}, {value, Val}, {path, Path}}).
+
 
 invalid_for_type(ExpectType, Val, Key, Path) ->
     #ej_invalid{type = json_type,
@@ -326,6 +380,8 @@ invalid_for_type(ExpectType, Val, Key, Path) ->
                 found = Val,
                 key = make_key(Key, Path)}.
 
+do_array_map(_ItemSpec, []) ->
+    ok;
 do_array_map(ItemSpec, [Item|Rest]) ->
     %% FIXME: do we want to record element index?
     case check_value_spec(<<"item_fake_key">>, ItemSpec, Item, #spec_ctx{}) of
@@ -334,6 +390,24 @@ do_array_map(ItemSpec, [Item|Rest]) ->
         Error ->
             {bad_item, Error}
     end.
+
+do_object_map(KeySpec, ValSpec, {L}) when is_list(L) ->
+    do_object_map(KeySpec, ValSpec, L);
+do_object_map(_KeySpec, _ValSpec, []) ->
+    ok;
+do_object_map(KeySpec, ValSpec, [{Key, Val}|Rest]) ->
+    case check_value_spec(<<"item_fake_key_key">>, KeySpec, Key, #spec_ctx{}) of
+        ok ->
+            case check_value_spec(<<"item_fake_key_value">>, ValSpec, Val, #spec_ctx{}) of
+                ok ->
+                    do_object_map(KeySpec, ValSpec, Rest);
+                ValueError ->
+                    {bad_item, object_value, ValueError}
+            end;
+        KeyError ->
+            {bad_item, object_key, KeyError}
+    end.
+
 
 join_bins([], _Sep) ->
     <<>>;
