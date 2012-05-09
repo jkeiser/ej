@@ -3,81 +3,10 @@
 -include_lib("eunit/include/eunit.hrl").
 -include_lib("ej/include/ej.hrl").
 
-nested_specs_test_() ->
-    Spec = {[{<<"name">>, {string_match, regex_for(name)}},
-             {<<"a">>, {[
-                         {<<"a_name">>, {string_match, regex_for(name)}},
-                         {<<"b">>,
-                          {[{<<"b_name">>, {string_match, regex_for(name)}}]}}
-                        ]}}
-            ]},
-    {_, RegexMsg} = regex_for(name),
-    Tests = [
-
-             %% {input,
-             %%  expected}
-
-             {{[{<<"name">>, <<"top">>}]},
-              #ej_invalid{type = missing, key = <<"a">>,
-                          expected_type = object}},
-
-             {{[{<<"name">>, <<"top">>}, {<<"a">>, {[]}}]},
-              #ej_invalid{type = missing, key = <<"a.a_name">>, expected_type = string}},
-
-             {{[{<<"name">>, <<"top">>},
-                {<<"a">>,
-                 {[{<<"a_name">>, <<"alice">>}]}}
-               ]},
-              #ej_invalid{type = missing, key = <<"a.b">>, expected_type = object}},
-
-             {{[{<<"name">>, <<"top">>},
-                {<<"a">>,
-                 {[{<<"a_name">>, <<"alice">>},
-                   {<<"b">>, {[]}}]}}
-               ]},
-              #ej_invalid{type = missing, key = <<"a.b.b_name">>,
-                          expected_type = string}},
-
-             {{[{<<"name">>, <<"top">>},
-                {<<"a">>,
-                 {[{<<"a_name">>, <<"alice">>},
-                   {<<"b">>, <<"BAD">>}]}}
-               ]},
-              #ej_invalid{type = json_type, key = <<"a.b">>,
-                          found = <<"BAD">>, found_type = string,
-                          expected_type = object}},
-
-             {{[{<<"name">>, <<"top">>},
-                {<<"a">>,
-                 {[{<<"a_name">>, <<"alice">>},
-                   {<<"b">>,
-                    {[{<<"b_name">>, <<"___">>}]}}]}}
-               ]},
-              #ej_invalid{type = string_match, key = <<"a.b.b_name">>,
-                          found = <<"___">>,
-                          found_type = string,
-                          expected_type = string,
-                          msg = RegexMsg}},
-
-             {{[{<<"name">>, <<"top">>},
-                {<<"a">>,
-                 {[{<<"a_name">>, <<"alice">>},
-                   {<<"b">>,
-                    {[{<<"b_name">>, <<"bob">>}]}}]}}
-               ]},
-              ok}
-            ],
-    [ ?_assertEqual(Expect, ej:valid(Spec, In)) || {In, Expect} <- Tests ].
-
-basic(Name) ->
-    {[{<<"name">>, Name}]}.
-
-basic_with(Name, With) ->
-    lists:foldl(fun({K, V}, Acc) ->
-                        ej:set({K}, Acc, V)
-                end, basic(Name), With).
 
 basic_spec_0_test_() ->
+    %% Test required key with string_match and optional key whose
+    %% value must be a string.
     Spec = {[{<<"name">>, {string_match, regex_for(basic_name)}},
              {{opt, <<"description">>}, string}
             ]},
@@ -109,7 +38,7 @@ basic_spec_0_test_() ->
                               basic_with(<<"fred">>,
                                         [{<<"description">>, {[]}}])))].
 
-basic_spec_1_test_() ->
+array_map_test_() ->
     Spec = {[{<<"name">>, {string_match, regex_for(basic_name)}},
              {{opt, <<"description">>}, string},
              {<<"items">>, {array_map, {string_match, regex_for(item)}}}
@@ -136,31 +65,52 @@ basic_spec_1_test_() ->
                    ej:valid(Spec, BadItemsType))
     ].
 
-basic_spec_2_test_() ->
-    %% tests for simple JSON type validation
-    Spec = {[{<<"name">>, {string_match, regex_for(basic_name)}},
-             {<<"objects">>, object}
-            ]},
-    [
-     ?_assertEqual(ok, ej:valid(Spec,
-                                basic_with(<<"fred">>, [{<<"objects">>, {[]}}]))),
+json_type_test_() ->
+    Types = [string, number, null, boolean, array, object],
+    SpecForType = fun(Type) ->
+                          {[{<<"data">>, Type}]}
+                  end,
+    DataForType = fun(string) ->
+                          <<"abc">>;
+                     (number) ->
+                             123;
+                     (null) ->
+                          null;
+                     (boolean) ->
+                          true;
+                     (array) ->
+                          [1.0];
+                     (object) ->
+                          {[]}
+                  end,
+    GoodForType = fun(Type) ->
+                          {[{<<"data">>, DataForType(Type)}]}
+                  end,
+    BadForType = fun(Type) ->
+                         [ {T, GoodForType(T)} || T <- (Types -- [Type]) ]
+                 end,
 
-     ?_assertEqual(#ej_invalid{type = json_type,
-                               key = <<"objects">>,
-                               expected_type = object,
-                               found = [],
-                               found_type = array},
-                   ej:valid(Spec, basic_with(<<"fred">>, [{<<"objects">>, []}]))),
+    OkTests = [ {atom_to_list(T) ++ " ok",
+                 fun() ->
+                         ?assertEqual(ok, ej:valid(SpecForType(T), GoodForType(T)))
+                 end} || T <- Types ],
 
-     ?_assertEqual(#ej_invalid{type = json_type,
-                               key = <<"objects">>,
-                               expected_type = object,
-                               found_type = string,
-                               found = <<"blah">>},
-                   ej:valid(Spec,
-                            basic_with(<<"fred">>, [{<<"objects">>, <<"blah">>}])))
+    MissingTests = [ {atom_to_list(T) ++ " missing",
+                      fun() ->
+                              ?assertEqual(#ej_invalid{type = missing, key = <<"data">>,
+                                                       expected_type = T},
+                                           ej:valid(SpecForType(T), {[]}))
+                      end} || T <- Types ],
 
-    ].
+    BadTests = [ [ {atom_to_list(T) ++ " wrong type",
+                  fun() ->
+                          ?assertEqual(#ej_invalid{type = json_type, key = <<"data">>,
+                                                   expected_type = T,
+                                                   found_type = FT,
+                                                   found = DataForType(FT)},
+                                       ej:valid(SpecForType(T), Bad))
+                  end} || {FT, Bad} <- BadForType(T) ] || T <- Types ],
+    OkTests ++ MissingTests ++ BadTests.
 
 literal_key_and_value_test_() ->
     Spec = {[
@@ -181,7 +131,7 @@ literal_key_and_value_test_() ->
                    ej:valid(Spec, {[]}))
     ].
 
-fun_test_() ->
+fun_match_test_() ->
     MyFun = fun(<<"aa", _V/binary>>) ->
                     ok;
                (_) ->
@@ -278,6 +228,81 @@ object_map_test_() ->
                                expected_type = object},
                    ej:valid(Spec, BadMissing))
     ].
+
+nested_specs_test_() ->
+    Spec = {[{<<"name">>, {string_match, regex_for(name)}},
+             {<<"a">>, {[
+                         {<<"a_name">>, {string_match, regex_for(name)}},
+                         {<<"b">>,
+                          {[{<<"b_name">>, {string_match, regex_for(name)}}]}}
+                        ]}}
+            ]},
+    {_, RegexMsg} = regex_for(name),
+    Tests = [
+
+             %% {input,
+             %%  expected}
+
+             {{[{<<"name">>, <<"top">>}]},
+              #ej_invalid{type = missing, key = <<"a">>,
+                          expected_type = object}},
+
+             {{[{<<"name">>, <<"top">>}, {<<"a">>, {[]}}]},
+              #ej_invalid{type = missing, key = <<"a.a_name">>, expected_type = string}},
+
+             {{[{<<"name">>, <<"top">>},
+                {<<"a">>,
+                 {[{<<"a_name">>, <<"alice">>}]}}
+               ]},
+              #ej_invalid{type = missing, key = <<"a.b">>, expected_type = object}},
+
+             {{[{<<"name">>, <<"top">>},
+                {<<"a">>,
+                 {[{<<"a_name">>, <<"alice">>},
+                   {<<"b">>, {[]}}]}}
+               ]},
+              #ej_invalid{type = missing, key = <<"a.b.b_name">>,
+                          expected_type = string}},
+
+             {{[{<<"name">>, <<"top">>},
+                {<<"a">>,
+                 {[{<<"a_name">>, <<"alice">>},
+                   {<<"b">>, <<"BAD">>}]}}
+               ]},
+              #ej_invalid{type = json_type, key = <<"a.b">>,
+                          found = <<"BAD">>, found_type = string,
+                          expected_type = object}},
+
+             {{[{<<"name">>, <<"top">>},
+                {<<"a">>,
+                 {[{<<"a_name">>, <<"alice">>},
+                   {<<"b">>,
+                    {[{<<"b_name">>, <<"___">>}]}}]}}
+               ]},
+              #ej_invalid{type = string_match, key = <<"a.b.b_name">>,
+                          found = <<"___">>,
+                          found_type = string,
+                          expected_type = string,
+                          msg = RegexMsg}},
+
+             {{[{<<"name">>, <<"top">>},
+                {<<"a">>,
+                 {[{<<"a_name">>, <<"alice">>},
+                   {<<"b">>,
+                    {[{<<"b_name">>, <<"bob">>}]}}]}}
+               ]},
+              ok}
+            ],
+    [ ?_assertEqual(Expect, ej:valid(Spec, In)) || {In, Expect} <- Tests ].
+
+basic(Name) ->
+    {[{<<"name">>, Name}]}.
+
+basic_with(Name, With) ->
+    lists:foldl(fun({K, V}, Acc) ->
+                        ej:set({K}, Acc, V)
+                end, basic(Name), With).
+
 
 regex_for(key) ->
     Pat = <<"^[[:alpha:][:digit:]]+$">>,

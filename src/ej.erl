@@ -258,8 +258,8 @@ type_from_spec(Type) when Type =:= string;
                           Type =:= number;
                           Type =:= boolean;
                           Type =:= array;
-                          Type =:= object
-                          ->
+                          Type =:= object;
+                          Type =:= null ->
     Type;
 type_from_spec(Type) ->
     error({unknown_spec, type_from_spec, Type}).
@@ -373,14 +373,32 @@ check_value_spec(_Key, string, Val, _Ctx) when is_binary(Val) ->
     ok;
 check_value_spec(Key, string, Val, #spec_ctx{path = Path}) ->
     invalid_for_type(string, Val, Key, Path);
+
 check_value_spec(_Key, object, {VL}, _Ctx) when is_list(VL) ->
     ok;
 check_value_spec(Key, object, Val, #spec_ctx{path = Path}) ->
     invalid_for_type(object, Val, Key, Path);
+
 check_value_spec(_Key, number, Val, _Ctx) when is_number(Val) ->
     ok;
 check_value_spec(Key, number, Val, #spec_ctx{path = Path}) ->
     invalid_for_type(number, Val, Key, Path);
+
+check_value_spec(_Key, array, Val, _Ctx) when is_list(Val) ->
+    ok;
+check_value_spec(Key, array, Val, #spec_ctx{path = Path}) ->
+    invalid_for_type(array, Val, Key, Path);
+
+check_value_spec(_Key, null, null, _Ctx) ->
+    ok;
+check_value_spec(Key, null, Val, #spec_ctx{path = Path}) ->
+    invalid_for_type(null, Val, Key, Path);
+
+check_value_spec(_Key, boolean, Val, _Ctx) when Val =:= true; Val =:= false ->
+    ok;
+check_value_spec(Key, boolean, Val, #spec_ctx{path = Path}) ->
+    invalid_for_type(boolean, Val, Key, Path);
+
 check_value_spec(_Key, Val, Val, _Ctx) when is_binary(Val) ->
     %% exact match desired
     ok;
