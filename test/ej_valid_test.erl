@@ -181,6 +181,41 @@ literal_key_and_value_test_() ->
                    ej:valid(Spec, {[]}))
     ].
 
+fun_test_() ->
+    MyFun = fun(<<"aa", _V/binary>>) ->
+                    ok;
+               (_) ->
+                    error
+            end,
+    Spec = {[
+             {<<"akey">>, {fun_match, {MyFun, string, <<"abc">>}}}
+            ]},
+
+    Good = {[{<<"akey">>, <<"aabcdef">>}]},
+    Bad = {[{<<"akey">>, <<"abcdef">>}]},
+    Missing = {[]},
+    BadType = {[{<<"akey">>, 123}]},
+    [
+     ?_assertEqual(ok, ej:valid(Spec, Good)),
+
+     ?_assertEqual(#ej_invalid{type = fun_match, key = <<"akey">>,
+                               expected_type = string,
+                               found_type = string,
+                               found = <<"abcdef">>,
+                               msg = <<"abc">>},
+                   ej:valid(Spec, Bad)),
+
+     ?_assertEqual(#ej_invalid{type = missing, key = <<"akey">>,
+                               expected_type = string},
+                   ej:valid(Spec, Missing)),
+
+     ?_assertEqual(#ej_invalid{type = json_type, key = <<"akey">>,
+                              expected_type = string,
+                              found_type = number,
+                              found = 123},
+                  ej:valid(Spec, BadType))
+    ].
+    
 object_map_test_() ->
     Spec = {[
              {<<"object">>,

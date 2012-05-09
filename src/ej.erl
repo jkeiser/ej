@@ -246,6 +246,8 @@ type_from_spec({array_map, _}) ->
     array;
 type_from_spec({object_map, _, _}) ->
     object;
+type_from_spec({fun_match, {_, Type, _}}) ->
+    Type;
 type_from_spec(Literal) when is_binary(Literal) ->
     string;
 type_from_spec(Literal) when is_integer(Literal) orelse is_float(Literal) ->
@@ -305,6 +307,28 @@ check_value_spec(Key, {string_match, _}, Val, #spec_ctx{path = Path}) ->
                 expected_type = string,
                 found_type = json_type(Val),
                 found = Val};
+
+check_value_spec(Key, {fun_match, {Fun, Type, Msg}}, Val, #spec_ctx{path = Path}) ->
+    %% user supplied fun
+    FoundType = json_type(Val),
+    case FoundType =:= Type of
+        false ->
+            #ej_invalid{type = json_type, key = make_key(Key, Path),
+                        expected_type = Type,
+                        found_type = FoundType,
+                        found = Val};
+        true ->
+            case Fun(Val) of
+                ok ->
+                    ok;
+                _ ->
+                    #ej_invalid{type = fun_match, key = make_key(Key, Path),
+                                expected_type = Type,
+                                found = Val,
+                                found_type = json_type(Val),
+                                msg = Msg}
+            end
+    end;
 
 check_value_spec(Key, {array_map, ItemSpec}, Val, #spec_ctx{path = Path}) when is_list(Val) ->
     case do_array_map(ItemSpec, Val) of
