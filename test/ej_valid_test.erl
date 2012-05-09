@@ -219,9 +219,9 @@ fun_test_() ->
 object_map_test_() ->
     Spec = {[
              {<<"object">>,
-              {object_map,
-               {keys, {string_match, regex_for(key)}},
-               {values, {string_match, regex_for(value)}}}}
+              {object_map, {
+                 {keys, {string_match, regex_for(key)}},
+                 {values, {string_match, regex_for(value)}}}}}
             ]},
         
     Good = {[{<<"object">>,

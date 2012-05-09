@@ -244,7 +244,7 @@ type_from_spec({string_match, _}) ->
     string;
 type_from_spec({array_map, _}) ->
     array;
-type_from_spec({object_map, _, _}) ->
+type_from_spec({object_map, _}) ->
     object;
 type_from_spec({fun_match, {_, Type, _}}) ->
     Type;
@@ -349,7 +349,7 @@ check_value_spec(Key, {array_map, _ItemSpec}, Val, #spec_ctx{path = Path}) ->
                 found_type = json_type(Val),
                 found = Val};
 
-check_value_spec(Key, {object_map, {keys, KeySpec}, {values, ValSpec}},
+check_value_spec(Key, {object_map, {{keys, KeySpec}, {values, ValSpec}}},
                  Val={L}, #spec_ctx{path = Path}) when is_list(L) ->
     case do_object_map(KeySpec, ValSpec, Val) of
         ok ->
