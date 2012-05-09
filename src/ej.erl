@@ -188,24 +188,26 @@ delete(Keys, Obj) when is_tuple(Keys) ->
 
 %% %% An re module regex (compiled) and a message (binary) that will be
 %% %% returned when nomatch is triggered.
-%% -type string_match() :: {'string_match', {re:mp(), binary()}}.
+-type ej_string_match() :: {'string_match', {re:mp(), _}}.
+-type ej_fun_match() :: {fun_match, {fun((json_term()) -> ok | error),
+                                        ej_json_type_name(), _}}.
+-type ej_array_map() :: {array_map, ej_json_val_spec()}.
+-type ej_object_map() :: {object_map, {{keys, ej_json_val_spec()},
+                                       {values, ej_json_val_spec()}}}.
 
-%% -type string_spec() ::
-%%         %% exact
-%%         binary() |
-%%         %% re module regex with binary message returned when nomatch
-%%         %% is triggered.
-%%         string_match().
+-type ej_json_spec() :: {[ej_json_spec_rule()]}.
+-type ej_json_spec_rule() :: {ej_json_key_spec(), ej_json_val_spec()}.
+-type ej_json_key_spec() :: binary() | {opt, binary()}.
+-type ej_json_val_spec() :: binary()             |
+                            ej_json_type_name()  |
+                            ej_string_match()    |
+                            ej_fun_match()       |
+                            ej_array_map()       |
+                            ej_object_map()      |
+                            {[ej_json_val_spec()]}.
 
-%% -type json_type_spec() :: 'string'  |
-%%                           'null'    |
-%%                           'boolean' |
-%%                           'array'   |
-%%                           'object'.
-
-%% -type key_spec() :: string_spec() |
-                    %% {'opt', string_spec()}.
-
+-spec valid(Spec :: ej_json_spec(), Object:: json_object()) -> ok | #ej_invalid{}.
+%% @doc Validate JSON terms. TODO: add docs and examples
 valid({L}, Obj={OL}) when is_list(L) andalso is_list(OL) ->
     valid(L, Obj, #spec_ctx{}).
 
