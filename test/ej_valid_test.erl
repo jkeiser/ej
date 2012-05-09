@@ -113,16 +113,16 @@ json_type_test_() ->
     OkTests ++ MissingTests ++ BadTests.
 
 any_of_test_() ->
-    Spec = {[ {<<"blah">>, {any_of, <<"foo">>, <<"other_foo">>}} ]},
+    Spec = {[ {<<"blah">>, {any_of, {[<<"foo">>, <<"other_foo">>], <<"Value must be 'foo' or 'other_foo'">>}}} ]},
     [
      ?_assertEqual(ok, ej:valid(Spec, {[{<<"blah">>, <<"foo">>}]})),
      ?_assertEqual(ok, ej:valid(Spec, {[{<<"blah">>, <<"other_foo">>}]})),
-     ?_assertEqual(#ej_invalid{type = exact,
+     ?_assertEqual(#ej_invalid{type = any_of,
                               key = <<"blah">>,
-                              expected_type = string,
+                              expected_type = any_value,
                               found_type = string,
                               found = <<"bjork">>,
-                              msg = <<"other_foo">>},
+                              msg = <<"Value must be 'foo' or 'other_foo'">>},
                    ej:valid(Spec, {[{<<"blah">>, <<"bjork">>}]}))
     ].
 
